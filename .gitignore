@@ -1,0 +1,17 @@
+# Build artifacts
+bin/
+obj/
+out/
+publish/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# .NET CLI local state (sandbox workaround)
+.dotnet-cli-home/
+
+# Runtime artifacts (must never contain chat content in future milestones)
+*.log
