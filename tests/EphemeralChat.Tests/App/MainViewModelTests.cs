@@ -16,6 +16,7 @@ public class MainViewModelTests
         viewModel.SetLocalIdentity(identity);
 
         Assert.Equal($"Peer ID: {identity.PeerId}", viewModel.LocalPeerDescription);
+        Assert.Equal("Profile: Default", viewModel.ProfileDescription);
     }
 
     [Fact]

@@ -9,20 +9,61 @@
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,8">
             <TextBlock Text="{Binding ConnectionStatus}" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding ProfileDescription}" Foreground="Gray" />
             <TextBlock Text="{Binding LocalPeerDescription}" Foreground="Gray" />
+            <TextBlock Text="{Binding RequestStatus}" Foreground="Gray" />
+            <TextBlock Text="{Binding ConnectedPeerDescription}" Foreground="Gray" />
         </StackPanel>
 
-        <ListBox Grid.Row="1"
+        <GroupBox Grid.Row="1"
+                 Header="Online Peers"
+                 Margin="0,0,0,8">
+            <DockPanel>
+                <Button DockPanel.Dock="Right"
+                        Content="Send Connect Request"
+                        Command="{Binding SendConnectRequestCommand}"
+                        Padding="12,4"
+                        Margin="8,0,0,0" />
+                <ListBox ItemsSource="{Binding Peers}"
+                         SelectedItem="{Binding SelectedPeer}"
+                         DisplayMemberPath="PeerId"
+                         Height="72" />
+            </DockPanel>
+        </GroupBox>
+
+        <DockPanel Grid.Row="2" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right"
+                    Content="Reject"
+                    Command="{Binding RejectRequestCommand}"
+                    Padding="12,4"
+                    Margin="8,0,0,0" />
+            <Button DockPanel.Dock="Right"
+                    Content="Accept"
+                    Command="{Binding AcceptRequestCommand}"
+                    Padding="12,4"
+                    Margin="8,0,0,0" />
+            <TextBlock Text="{Binding IncomingRequestDescription}"
+                       VerticalAlignment="Center" />
+        </DockPanel>
+
+        <ListBox Grid.Row="3"
                  ItemsSource="{Binding Messages}"
                  HorizontalContentAlignment="Stretch" />
 
-        <DockPanel Grid.Row="2" Margin="0,8,0,0">
+        <DockPanel Grid.Row="4" Margin="0,8,0,0">
+            <Button DockPanel.Dock="Left"
+                    Content="Connect Signaling"
+                    Command="{Binding ConnectSignalingCommand}"
+                    Padding="16,4"
+                    Margin="0,0,8,0" />
             <Button DockPanel.Dock="Right"
                     Content="Send"
                     Command="{Binding SendCommand}"
