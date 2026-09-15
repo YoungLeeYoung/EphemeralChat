@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      SIPSorcery: managed WebRTC implementation (SDP / ICE / DTLS / SRTP).
+      License: MIT. Used so we do not implement WebRTC ourselves.
+    -->
+    <PackageReference Include="SIPSorcery" Version="10.0.16" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EphemeralChat.Core\EphemeralChat.Core.csproj" />
+  </ItemGroup>
+
+</Project>

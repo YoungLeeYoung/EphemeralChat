@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EphemeralChat.Core\EphemeralChat.Core.csproj" />
+    <ProjectReference Include="..\EphemeralChat.WebRTC\EphemeralChat.WebRTC.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

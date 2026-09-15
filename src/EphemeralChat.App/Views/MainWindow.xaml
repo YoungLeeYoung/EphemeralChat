@@ -21,6 +21,7 @@
             <TextBlock Text="{Binding LocalPeerDescription}" Foreground="Gray" />
             <TextBlock Text="{Binding RequestStatus}" Foreground="Gray" />
             <TextBlock Text="{Binding ConnectedPeerDescription}" Foreground="Gray" />
+            <TextBlock Text="{Binding P2pStatus}" Foreground="Gray" />
         </StackPanel>
 
         <GroupBox Grid.Row="1"

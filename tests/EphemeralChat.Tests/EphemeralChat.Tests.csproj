@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\EphemeralChat.Core\EphemeralChat.Core.csproj" />
     <ProjectReference Include="..\..\src\EphemeralChat.Network\EphemeralChat.Network.csproj" />
     <ProjectReference Include="..\..\src\EphemeralChat.Signaling\EphemeralChat.Signaling.csproj" />
+    <ProjectReference Include="..\..\src\EphemeralChat.WebRTC\EphemeralChat.WebRTC.csproj" />
     <ProjectReference Include="..\..\src\EphemeralChat.App\EphemeralChat.App.csproj" />
   </ItemGroup>
 

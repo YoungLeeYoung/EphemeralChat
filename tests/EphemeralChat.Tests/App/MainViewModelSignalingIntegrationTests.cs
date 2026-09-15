@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using EphemeralChat.App.ViewModels;
 using EphemeralChat.Network.Signaling;
+using EphemeralChat.Network.P2P;
 using EphemeralChat.Security.Identity;
 using EphemeralChat.Signaling;
 using EphemeralChat.Signaling.Server;
@@ -117,6 +118,77 @@ public class MainViewModelSignalingIntegrationTests
         finally
         {
             await app.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SignalingDisconnect_KeepsAnEstablishedP2pSessionAlive()
+    {
+        var (app, port) = await StartServerAsync();
+        var fakeManager = new ConnectedFakeP2pManager();
+        MainViewModel? viewModel = null;
+        try
+        {
+            using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            using var identity = new LocalIdentity(key);
+            viewModel = new MainViewModel(
+                WsUri(port),
+                _ => fakeManager);
+            viewModel.SetLocalIdentity(identity);
+
+            viewModel.ConnectSignalingCommand.Execute(null);
+            await WaitUntilAsync(() => viewModel.ConnectionStatus == "Signaling: Connected");
+            fakeManager.RaiseConnected();
+            await WaitUntilAsync(() => viewModel.P2pStatus == "Direct P2P: Connected");
+            Assert.Equal("Direct P2P: Connected", viewModel.P2pStatus);
+
+            using var shutdownCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+            await app.StopAsync(shutdownCts.Token);
+            await WaitUntilAsync(() => viewModel.ConnectionStatus == "Signaling: Offline");
+
+            Assert.Equal("Direct P2P: Connected", viewModel.P2pStatus);
+            Assert.False(fakeManager.Disposed);
+        }
+        finally
+        {
+            viewModel?.Dispose();
+            await app.DisposeAsync();
+        }
+    }
+
+    private sealed class ConnectedFakeP2pManager : IP2PConnectionManager
+    {
+        public event Action<P2PConnectionState>? ConnectionStateChanged;
+
+#pragma warning disable CS0067
+        public event Action? DataChannelOpened;
+        public event Action<string>? OperationFailed;
+#pragma warning restore CS0067
+
+        public string? RemotePeerId { get; private set; }
+
+        public P2PConnectionState State { get; private set; } = P2PConnectionState.Connected;
+
+        public bool Disposed { get; private set; }
+
+        public void RaiseConnected() => ConnectionStateChanged?.Invoke(P2PConnectionState.Connected);
+
+        public Task StartOutgoingAsync(string remotePeerId, CancellationToken ct = default)
+        {
+            RemotePeerId = remotePeerId;
+            return Task.CompletedTask;
+        }
+
+        public Task PrepareIncomingAsync(string remotePeerId, CancellationToken ct = default)
+        {
+            RemotePeerId = remotePeerId;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
         }
     }
 }
