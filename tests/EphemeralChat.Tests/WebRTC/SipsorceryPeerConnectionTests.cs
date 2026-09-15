@@ -14,6 +14,8 @@ public class SipsorceryPeerConnectionTests
         TaskCompletionSource connectedOnCallee = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource dataChannelOnCaller = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource dataChannelOnCallee = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<string> textOnCallee = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<string> textOnCaller = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // SIPSorcery can raise local candidates while setLocalDescription runs
         // inside CreateOfferAsync, so listeners must be attached beforehand.
@@ -38,6 +40,8 @@ public class SipsorceryPeerConnectionTests
         };
         caller.DataChannelOpened += () => dataChannelOnCaller.TrySetResult();
         callee.DataChannelOpened += () => dataChannelOnCallee.TrySetResult();
+        callee.MessageReceived += payload => textOnCallee.TrySetResult(payload);
+        caller.MessageReceived += payload => textOnCaller.TrySetResult(payload);
         caller.ConnectionStateChanged += state => Console.WriteLine($"caller state: {state}");
         callee.ConnectionStateChanged += state => Console.WriteLine($"callee state: {state}");
 
@@ -67,5 +71,13 @@ public class SipsorceryPeerConnectionTests
 
         await Task.WhenAll(connectedOnCaller.Task, connectedOnCallee.Task).WaitAsync(TimeSpan.FromSeconds(10));
         await Task.WhenAll(dataChannelOnCaller.Task, dataChannelOnCallee.Task).WaitAsync(TimeSpan.FromSeconds(10));
+
+        await caller.SendTextAsync("hello over datachannel");
+        string received = await textOnCallee.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("hello over datachannel", received);
+
+        await callee.SendTextAsync("reply over datachannel");
+        string reply = await textOnCaller.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("reply over datachannel", reply);
     }
 }

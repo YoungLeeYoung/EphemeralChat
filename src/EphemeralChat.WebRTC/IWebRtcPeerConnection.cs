@@ -16,6 +16,9 @@ public interface IWebRtcPeerConnection : IAsyncDisposable
     /// <summary>Fired when the peer connection's data channel is open.</summary>
     event Action? DataChannelOpened;
 
+    /// <summary>Fired when a UTF-8 text payload arrives on the data channel.</summary>
+    event Action<string>? MessageReceived;
+
     /// <summary>
     /// Creates the application data channel before the offer is produced.
     /// The answerer receives the same channel through <see cref="DataChannelOpened"/>.
@@ -33,4 +36,7 @@ public interface IWebRtcPeerConnection : IAsyncDisposable
 
     /// <summary>Adds a remote ICE candidate (JSON serialized).</summary>
     Task AddIceCandidateAsync(string candidateSdpJson, CancellationToken ct = default);
+
+    /// <summary>Sends a UTF-8 text payload over the open data channel.</summary>
+    Task SendTextAsync(string payload, CancellationToken ct = default);
 }

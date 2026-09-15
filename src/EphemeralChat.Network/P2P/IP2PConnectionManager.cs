@@ -10,6 +10,8 @@ public interface IP2PConnectionManager : IAsyncDisposable
 
     event Action? DataChannelOpened;
 
+    event Action<string, P2PTextMessage>? TextMessageReceived;
+
     event Action<string>? OperationFailed;
 
     string? RemotePeerId { get; }
@@ -19,4 +21,6 @@ public interface IP2PConnectionManager : IAsyncDisposable
     Task StartOutgoingAsync(string remotePeerId, CancellationToken ct = default);
 
     Task PrepareIncomingAsync(string remotePeerId, CancellationToken ct = default);
+
+    Task<P2PTextMessage> SendTextAsync(string content, CancellationToken ct = default);
 }

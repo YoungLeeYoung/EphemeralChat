@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+using System.Windows;
 using EphemeralChat.Core.Models;
 using EphemeralChat.Network.P2P;
 using EphemeralChat.Network.Signaling;
@@ -14,10 +15,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _connectionStatus = "Signaling: Offline";
     private string _p2pStatus = "Direct P2P: Idle";
     private string _requestStatus = string.Empty;
+    private string _targetPeerId = string.Empty;
     private bool _isConnecting;
     private bool _isResponding;
     private readonly RelayCommand _sendCommand;
     private readonly RelayCommand _connectSignalingCommand;
+    private readonly RelayCommand _copyPeerIdCommand;
     private readonly RelayCommand _sendConnectRequestCommand;
     private readonly RelayCommand _acceptRequestCommand;
     private readonly RelayCommand _rejectRequestCommand;
@@ -27,7 +30,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private LocalIdentity? _localIdentity;
     private SignalingClient? _signalingClient;
     private IP2PConnectionManager? _p2pManager;
-    private PeerPresence? _selectedPeer;
     private string? _incomingRequestPeerId;
     private string? _connectedPeerId;
 
@@ -38,7 +40,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _uiContext = SynchronizationContext.Current;
         _signalingUri = signalingUri ?? new Uri("ws://localhost:8080/ws");
         _p2pManagerFactory = p2pManagerFactory;
-        _sendCommand = new RelayCommand(Send, _ => !string.IsNullOrWhiteSpace(DraftMessage));
+        _sendCommand = new RelayCommand(
+            _ => _ = SendTextAsync(),
+            _ => CanSendMessage());
+        _copyPeerIdCommand = new RelayCommand(
+            _ => CopyPeerId(),
+            _ => _localIdentity is not null);
         _connectSignalingCommand = new RelayCommand(
             _ => _ = ConnectSignalingAsync(),
             _ => _localIdentity is not null && !_isConnecting && _signalingClient is null);
@@ -46,8 +53,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _ => _ = SendConnectRequestAsync(),
             _ => _signalingClient is not null
                 && !_isResponding
-                && SelectedPeer is not null
-                && SelectedPeer.PeerId != _connectedPeerId);
+                && !string.IsNullOrWhiteSpace(_targetPeerId)
+                && _targetPeerId.Trim() != _connectedPeerId
+                && _targetPeerId.Trim() != _localIdentity?.PeerId);
         _acceptRequestCommand = new RelayCommand(
             _ => _ = AcceptRequestAsync(),
             _ => CanRespondToIncomingRequest);
@@ -109,19 +117,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public ObservableCollection<PeerPresence> Peers { get; } = new();
-
-    public PeerPresence? SelectedPeer
+    public string TargetPeerId
     {
-        get => _selectedPeer;
+        get => _targetPeerId;
         set
         {
-            if (Equals(_selectedPeer, value))
+            if (_targetPeerId == value)
             {
                 return;
             }
 
-            _selectedPeer = value;
+            _targetPeerId = value;
             OnPropertyChanged();
             _sendConnectRequestCommand.RaiseCanExecuteChanged();
         }
@@ -159,6 +165,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public ICommand ConnectSignalingCommand => _connectSignalingCommand;
 
+    public ICommand CopyPeerIdCommand => _copyPeerIdCommand;
+
     public ICommand SendConnectRequestCommand => _sendConnectRequestCommand;
 
     public ICommand AcceptRequestCommand => _acceptRequestCommand;
@@ -171,6 +179,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _profileName = profileName ?? "Default";
         OnPropertyChanged(nameof(ProfileDescription));
         OnPropertyChanged(nameof(LocalPeerDescription));
+        _copyPeerIdCommand.RaiseCanExecuteChanged();
         _connectSignalingCommand.RaiseCanExecuteChanged();
     }
 
@@ -194,8 +203,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _localIdentity.PeerId,
             Convert.ToBase64String(_localIdentity.ExportPublicKey()));
         _signalingClient = client;
-        client.PeerListReceived += OnPeerListReceived;
-        client.PresenceChanged += OnPresenceChanged;
         client.ConnectionRequested += OnConnectionRequested;
         client.RequestResponded += OnRequestResponded;
         client.ErrorReceived += OnErrorReceived;
@@ -218,8 +225,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             IP2PConnectionManager manager = managerFactory(client);
             manager.ConnectionStateChanged += OnP2pStateChanged;
             manager.DataChannelOpened += OnP2pDataChannelOpened;
+            manager.TextMessageReceived += OnP2pTextMessageReceived;
             manager.OperationFailed += OnP2pOperationFailed;
             _p2pManager = manager;
+            _sendCommand.RaiseCanExecuteChanged();
             _sendConnectRequestCommand.RaiseCanExecuteChanged();
         }
         catch (OperationCanceledException)
@@ -241,24 +250,31 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private async Task SendConnectRequestAsync()
     {
-        if (_signalingClient is null || _isResponding || SelectedPeer is not { } target)
+        string? targetId = _targetPeerId?.Trim();
+        if (_signalingClient is null || _isResponding || string.IsNullOrEmpty(targetId))
         {
             return;
         }
 
-        if (target.PeerId == _connectedPeerId)
+        if (targetId == _connectedPeerId)
         {
             RequestStatus = "Already connected";
             return;
         }
 
+        if (targetId == _localIdentity?.PeerId)
+        {
+            RequestStatus = "Cannot connect to yourself";
+            return;
+        }
+
         _isResponding = true;
         _sendConnectRequestCommand.RaiseCanExecuteChanged();
-        RequestStatus = $"Request sent to {target.PeerId}";
+        RequestStatus = $"Request sent to {targetId}";
 
         try
         {
-            await _signalingClient.SendConnectRequestAsync(target.PeerId);
+            await _signalingClient.SendConnectRequestAsync(targetId);
         }
         catch (Exception)
         {
@@ -337,35 +353,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnPeerListReceived(IReadOnlyList<PeerPresence> peers) => RunOnUiThread(() =>
-    {
-        ClearPeers();
-        foreach (PeerPresence peer in peers.Where(p => p.IsOnline))
-        {
-            UpsertPeer(peer);
-        }
-
-        _sendConnectRequestCommand.RaiseCanExecuteChanged();
-    });
-
-    private void OnPresenceChanged(PeerPresence presence) => RunOnUiThread(() =>
-    {
-        if (presence.IsOnline)
-        {
-            UpsertPeer(presence);
-        }
-        else
-        {
-            RemovePeer(presence.PeerId);
-            if (SelectedPeer?.PeerId == presence.PeerId)
-            {
-                SelectedPeer = null;
-            }
-        }
-
-        _sendConnectRequestCommand.RaiseCanExecuteChanged();
-    });
-
     private void OnConnectionRequested(string requesterId) => RunOnUiThread(() =>
     {
         _incomingRequestPeerId = requesterId;
@@ -429,6 +416,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 P2PConnectionState.Closed => "Direct P2P: Closed",
                 _ => "Direct P2P: Unknown"
             };
+
+            if (state is P2PConnectionState.Disconnected or
+                P2PConnectionState.Failed or
+                P2PConnectionState.Closed)
+            {
+                // Session data is ephemeral. When the P2P session ends, its
+                // UI-only message objects are released immediately.
+                Messages.Clear();
+            }
+
+            _sendCommand.RaiseCanExecuteChanged();
         });
     }
 
@@ -437,6 +435,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         RunOnUiThread(() =>
         {
             P2pStatus = "Direct P2P: Data channel ready";
+            _sendCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void OnP2pTextMessageReceived(string fromPeerId, P2PTextMessage message)
+    {
+        RunOnUiThread(() =>
+        {
+            Messages.Add(new ChatMessage(
+                Sender: fromPeerId,
+                Content: message.Content,
+                SentAt: message.SentAt));
         });
     }
 
@@ -466,11 +476,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         RunOnUiThread(() =>
         {
-            ClearPeers();
             ClearIncomingRequest();
             RequestStatus = string.Empty;
             ConnectionStatus = "Signaling: Offline";
-            SelectedPeer = null;
             if (!preserveP2p)
             {
                 _connectedPeerId = null;
@@ -506,37 +514,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         });
     }
 
-    private void UpsertPeer(PeerPresence presence)
+    private void CopyPeerId()
     {
-        PeerPresence? existing = Peers.FirstOrDefault(p => p.PeerId == presence.PeerId);
-        int index = existing is null ? -1 : Peers.IndexOf(existing);
-        if (index >= 0)
+        if (_localIdentity is not null)
         {
-            Peers[index] = presence;
-            if (SelectedPeer?.PeerId == presence.PeerId)
-            {
-                SelectedPeer = presence;
-            }
+            Clipboard.SetText(_localIdentity.PeerId);
         }
-        else
-        {
-            Peers.Add(presence);
-        }
-    }
-
-    private void RemovePeer(string peerId)
-    {
-        PeerPresence? existing = Peers.FirstOrDefault(p => p.PeerId == peerId);
-        if (existing is not null)
-        {
-            Peers.Remove(existing);
-        }
-    }
-
-    private void ClearPeers()
-    {
-        Peers.Clear();
-        SelectedPeer = null;
     }
 
     private void ClearIncomingRequest()
@@ -572,15 +555,44 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _signalingClient = null;
         _p2pManager?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _p2pManager = null;
+        Messages.Clear();
     }
 
-    private void Send(object? parameter)
-    {
-        Messages.Add(new ChatMessage(
-            Sender: "Local",
-            Content: DraftMessage.Trim(),
-            SentAt: DateTimeOffset.Now));
+    private bool CanSendMessage() =>
+        !string.IsNullOrWhiteSpace(DraftMessage) &&
+        _p2pManager?.State == P2PConnectionState.Connected;
 
-        DraftMessage = string.Empty;
+    private async Task SendTextAsync()
+    {
+        string content = DraftMessage.Trim();
+        IP2PConnectionManager? manager = _p2pManager;
+        if (content.Length == 0 || manager is null || manager.State != P2PConnectionState.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            P2PTextMessage sent = await manager.SendTextAsync(content);
+            RunOnUiThread(() =>
+            {
+                Messages.Add(new ChatMessage(
+                    Sender: "Local",
+                    Content: sent.Content,
+                    SentAt: sent.SentAt));
+                DraftMessage = string.Empty;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+            P2pStatus = "Direct P2P: Message not sent";
+        }
+        finally
+        {
+            _sendCommand.RaiseCanExecuteChanged();
+        }
     }
 }

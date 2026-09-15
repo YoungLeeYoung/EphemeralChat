@@ -28,14 +28,13 @@ public class MainViewModelTests
     }
 
     [Fact]
-    public void Send_AddsMessageAndClearsDraft()
+    public void Send_DoesNotSendWithoutConnectedP2pSession()
     {
         var viewModel = new MainViewModel { DraftMessage = "  hello  " };
 
         viewModel.SendCommand.Execute(null);
 
-        Assert.Single(viewModel.Messages);
-        Assert.Equal("hello", viewModel.Messages[0].Content);
-        Assert.Equal(string.Empty, viewModel.DraftMessage);
+        Assert.Empty(viewModel.Messages);
+        Assert.Equal("  hello  ", viewModel.DraftMessage);
     }
 }

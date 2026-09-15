@@ -39,6 +39,8 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
 
     public event Action? DataChannelOpened;
 
+    public event Action<string, P2PTextMessage>? TextMessageReceived;
+
     public event Action<string>? OperationFailed;
 
     /// <summary>
@@ -134,6 +136,23 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
         }
     }
 
+    public async Task<P2PTextMessage> SendTextAsync(string content, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        IWebRtcPeerConnection? connection = _connection;
+        if (connection is null || _remotePeerId is null || _state != P2PConnectionState.Connected)
+        {
+            throw new InvalidOperationException("a connected P2P session is required");
+        }
+
+        var message = new P2PTextMessage(
+            Guid.NewGuid().ToString("N"),
+            content,
+            DateTimeOffset.UtcNow);
+        await connection.SendTextAsync(P2PTextProtocol.Serialize(message), ct);
+        return message;
+    }
+
     private async void OnOfferReceived(string fromPeerId, JsonElement payload)
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
@@ -224,10 +243,28 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
         }
     }
 
+    private void OnMessageReceived(string payload)
+    {
+        string? remotePeerId = _remotePeerId;
+        if (_isDisposed || remotePeerId is null)
+        {
+            return;
+        }
+
+        if (!P2PTextProtocol.TryDeserialize(payload, out P2PTextMessage? message) || message is null)
+        {
+            OperationFailed?.Invoke("P2P text message was malformed");
+            return;
+        }
+
+        TextMessageReceived?.Invoke(remotePeerId, message);
+    }
+
     private void AttachConnection(IWebRtcPeerConnection connection)
     {
         connection.ConnectionStateChanged += OnPeerConnectionStateChanged;
         connection.DataChannelOpened += OnDataChannelOpened;
+        connection.MessageReceived += OnMessageReceived;
         connection.IceCandidateGenerated += OnLocalIceCandidateGenerated;
         _connection = connection;
     }
@@ -295,6 +332,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
         {
             connection.ConnectionStateChanged -= OnPeerConnectionStateChanged;
             connection.DataChannelOpened -= OnDataChannelOpened;
+            connection.MessageReceived -= OnMessageReceived;
             connection.IceCandidateGenerated -= OnLocalIceCandidateGenerated;
             await connection.DisposeAsync();
         }

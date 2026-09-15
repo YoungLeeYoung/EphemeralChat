@@ -21,6 +21,7 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
     public event Action<string>? IceCandidateGenerated;
     public event Action<WebRtcConnectionState>? ConnectionStateChanged;
     public event Action? DataChannelOpened;
+    public event Action<string>? MessageReceived;
 
     public async Task CreateDataChannelAsync(string label, CancellationToken ct = default)
     {
@@ -29,6 +30,8 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
             ?? throw new InvalidOperationException("the WebRTC implementation did not create the data channel");
 
         channel.onopen += () => DataChannelOpened?.Invoke();
+        channel.onmessage += (_, _, data) =>
+            MessageReceived?.Invoke(System.Text.Encoding.UTF8.GetString(data));
         _dataChannel = channel;
     }
 
@@ -44,7 +47,10 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
             // SIPSorcery raises ondatachannel only after the remote-created
             // channel has sent its DCEP ACK. Unlike locally created channels,
             // it does not raise the inner channel's onopen event.
+            _dataChannel = channel;
             DataChannelOpened?.Invoke();
+            channel.onmessage += (_, _, data) =>
+                MessageReceived?.Invoke(System.Text.Encoding.UTF8.GetString(data));
         };
     }
 
@@ -66,11 +72,12 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
         return answer.toJSON();
     }
 
-    public async Task AcceptAnswerAsync(string answerSdpJson, CancellationToken ct = default)
+    public Task AcceptAnswerAsync(string answerSdpJson, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         EnsureDescriptionSucceeded(
             _connection.setRemoteDescription(ParseDescription(answerSdpJson, "answer")));
+        return Task.CompletedTask;
     }
 
     public Task AddIceCandidateAsync(string candidateSdpJson, CancellationToken ct = default)
@@ -79,6 +86,19 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
         RTCIceCandidateInit candidate = JsonSerializer.Deserialize<RTCIceCandidateInit>(
             candidateSdpJson) ?? throw new ArgumentException("ICE candidate JSON is empty", nameof(candidateSdpJson));
         _connection.addIceCandidate(candidate);
+        return Task.CompletedTask;
+    }
+
+    public Task SendTextAsync(string payload, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        RTCDataChannel? channel = _dataChannel;
+        if (channel is null || channel.readyState != RTCDataChannelState.open)
+        {
+            throw new InvalidOperationException("the WebRTC data channel is not open");
+        }
+
+        channel.send(payload);
         return Task.CompletedTask;
     }
 

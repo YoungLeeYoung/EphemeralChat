@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using EphemeralChat.App.ViewModels;
+using EphemeralChat.Core.Models;
 using EphemeralChat.Network.Signaling;
 using EphemeralChat.Network.P2P;
 using EphemeralChat.Security.Identity;
@@ -58,9 +59,8 @@ public class MainViewModelSignalingIntegrationTests
             await WaitUntilAsync(() => viewModelA.ConnectionStatus == "Signaling: Connected");
             viewModelB.ConnectSignalingCommand.Execute(null);
             await WaitUntilAsync(() => viewModelB.ConnectionStatus == "Signaling: Connected");
-            await WaitUntilAsync(() => viewModelA.Peers.Any(p => p.PeerId == identityB.PeerId));
 
-            viewModelA.SelectedPeer = viewModelA.Peers.Single(p => p.PeerId == identityB.PeerId);
+            viewModelA.TargetPeerId = identityB.PeerId;
             viewModelA.SendConnectRequestCommand.Execute(null);
             await WaitUntilAsync(() => viewModelB.HasIncomingRequest);
             Assert.Equal(identityA.PeerId, viewModelB.IncomingRequestDescription.Split(' ')[^1]);
@@ -100,9 +100,8 @@ public class MainViewModelSignalingIntegrationTests
             await WaitUntilAsync(() => viewModelA.ConnectionStatus == "Signaling: Connected");
             viewModelB.ConnectSignalingCommand.Execute(null);
             await WaitUntilAsync(() => viewModelB.ConnectionStatus == "Signaling: Connected");
-            await WaitUntilAsync(() => viewModelA.Peers.Any(p => p.PeerId == identityB.PeerId));
 
-            viewModelA.SelectedPeer = viewModelA.Peers.Single(p => p.PeerId == identityB.PeerId);
+            viewModelA.TargetPeerId = identityB.PeerId;
             viewModelA.SendConnectRequestCommand.Execute(null);
             await WaitUntilAsync(() => viewModelB.HasIncomingRequest);
 
@@ -156,6 +155,54 @@ public class MainViewModelSignalingIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task UiSendsAndReceivesP2pTextMessages()
+    {
+        var (app, port) = await StartServerAsync();
+        var fakeManager = new ConnectedFakeP2pManager();
+        MainViewModel? viewModel = null;
+        try
+        {
+            using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            using var identity = new LocalIdentity(key);
+            viewModel = new MainViewModel(
+                WsUri(port),
+                _ => fakeManager);
+            viewModel.SetLocalIdentity(identity);
+
+            viewModel.ConnectSignalingCommand.Execute(null);
+            await WaitUntilAsync(() => viewModel.ConnectionStatus == "Signaling: Connected");
+            fakeManager.RaiseConnected();
+            await WaitUntilAsync(() => viewModel.P2pStatus == "Direct P2P: Connected");
+
+            viewModel.DraftMessage = "  hello over p2p  ";
+            viewModel.SendCommand.Execute(null);
+            await WaitUntilAsync(() =>
+            {
+                ChatMessage[] snapshot = viewModel.Messages.ToArray();
+                return snapshot.Any(message =>
+                    message.Sender == "Local" &&
+                    message.Content == "hello over p2p");
+            });
+            Assert.Equal(string.Empty, viewModel.DraftMessage);
+
+            fakeManager.RaiseIncomingText(identity.PeerId, "reply over p2p");
+            await WaitUntilAsync(() =>
+            {
+                ChatMessage[] snapshot = viewModel.Messages.ToArray();
+                return snapshot.Any(message =>
+                    message.Sender == identity.PeerId &&
+                    message.Content == "reply over p2p");
+            });
+            Assert.Equal(2, viewModel.Messages.Count);
+        }
+        finally
+        {
+            viewModel?.Dispose();
+            await app.DisposeAsync();
+        }
+    }
+
     private sealed class ConnectedFakeP2pManager : IP2PConnectionManager
     {
         public event Action<P2PConnectionState>? ConnectionStateChanged;
@@ -163,6 +210,7 @@ public class MainViewModelSignalingIntegrationTests
 #pragma warning disable CS0067
         public event Action? DataChannelOpened;
         public event Action<string>? OperationFailed;
+        public event Action<string, P2PTextMessage>? TextMessageReceived;
 #pragma warning restore CS0067
 
         public string? RemotePeerId { get; private set; }
@@ -184,6 +232,17 @@ public class MainViewModelSignalingIntegrationTests
             RemotePeerId = remotePeerId;
             return Task.CompletedTask;
         }
+
+        public Task<P2PTextMessage> SendTextAsync(string content, CancellationToken ct = default) =>
+            Task.FromResult(new P2PTextMessage(
+                Guid.NewGuid().ToString("N"),
+                content,
+                DateTimeOffset.UtcNow));
+
+        public void RaiseIncomingText(string fromPeerId, string content) =>
+            TextMessageReceived?.Invoke(
+                fromPeerId,
+                new P2PTextMessage(Guid.NewGuid().ToString("N"), content, DateTimeOffset.UtcNow));
 
         public ValueTask DisposeAsync()
         {

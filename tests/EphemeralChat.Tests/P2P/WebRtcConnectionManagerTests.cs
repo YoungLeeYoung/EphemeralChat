@@ -71,6 +71,20 @@ public class WebRtcConnectionManagerTests
             connectionB.RaiseLocalCandidate("{\"candidate\":\"ice-from-b\"}");
             await WaitUntilAsync(() =>
                 connectionA.RemoteCandidates.Any(c => c.Contains("ice-from-b", StringComparison.Ordinal)));
+
+            var incomingTextOnB = new ConcurrentQueue<(string FromPeerId, P2PTextMessage Message)>();
+            managerB.TextMessageReceived += (fromPeerId, message) =>
+                incomingTextOnB.Enqueue((fromPeerId, message));
+
+            await managerA.SendTextAsync("hello over p2p");
+            await WaitUntilAsync(() => connectionA.SentTextPayloads.Count > 0);
+
+            connectionB.RaiseMessageReceived(connectionA.SentTextPayloads.Single());
+            (string receivedFrom, P2PTextMessage received) = await WaitForAsync(
+                incomingTextOnB,
+                item => item.Message.Content == "hello over p2p");
+            Assert.Equal(identityA.PeerId, receivedFrom);
+            Assert.Equal("hello over p2p", received.Content);
         }
         finally
         {
@@ -94,7 +108,7 @@ public class WebRtcConnectionManagerTests
         throw new TimeoutException("expected P2P coordination state did not arrive");
     }
 
-    private static async Task<T> WaitForAsync<T>(Func<T?> condition) where T : class
+    private static async Task<T> WaitForAsync<T>(Func<T?> condition)
     {
         DateTime deadline = DateTime.UtcNow + TestTimeout;
         while (DateTime.UtcNow < deadline)
@@ -150,6 +164,9 @@ public class WebRtcConnectionManagerTests
         public string? RemoteOffer { get; private set; }
         public string? RemoteAnswer { get; private set; }
         public List<string> RemoteCandidates { get; } = new();
+        public List<string> SentTextPayloads { get; } = new();
+
+        public event Action<string>? MessageReceived;
 
         public Task CreateDataChannelAsync(string label, CancellationToken ct = default)
         {
@@ -185,6 +202,15 @@ public class WebRtcConnectionManagerTests
 
         public void RaiseLocalCandidate(string candidateJson) =>
             IceCandidateGenerated?.Invoke(candidateJson);
+
+        public Task SendTextAsync(string payload, CancellationToken ct = default)
+        {
+            SentTextPayloads.Add(payload);
+            return Task.CompletedTask;
+        }
+
+        public void RaiseMessageReceived(string payload) =>
+            MessageReceived?.Invoke(payload);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
