@@ -23,6 +23,15 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
     private bool _hasRemoteDescription;
     private bool _isDisposed;
     private P2PConnectionState _state = P2PConnectionState.Idle;
+    private int _localHostCandidates;
+    private int _localSrflxCandidates;
+    private int _localRelayCandidates;
+    private int _remoteHostCandidates;
+    private int _remoteSrflxCandidates;
+    private int _remoteRelayCandidates;
+    private CancellationTokenSource? _iceWatchdogCts;
+
+    private static readonly TimeSpan IceWatchdogDelay = TimeSpan.FromSeconds(10);
 
     public WebRtcConnectionManager(
         SignalingClient signalingClient,
@@ -71,12 +80,14 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
             _isInitiator = true;
             _hasRemoteDescription = false;
             _pendingRemoteCandidates.Clear();
+            ResetIceCounters();
             SetState(P2PConnectionState.Connecting);
 
             await connection.CreateDataChannelAsync(DefaultDataChannelLabel, ct);
             string offerSdp = await connection.CreateOfferAsync(ct);
             await _signalingClient.SendOfferAsync(
                 remotePeerId, ParsePayload(offerSdp, "offer"), ct);
+            StartIceWatchdog();
         }
         catch (OperationCanceledException)
         {
@@ -117,6 +128,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
             _isInitiator = false;
             _hasRemoteDescription = false;
             _pendingRemoteCandidates.Clear();
+            ResetIceCounters();
             SetState(P2PConnectionState.Connecting);
         }
         catch (OperationCanceledException)
@@ -169,6 +181,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
             await FlushRemoteCandidatesLockedAsync();
             await _signalingClient.SendAnswerAsync(
                 fromPeerId, ParsePayload(answerSdp, "answer"));
+            StartIceWatchdog();
         }
         catch (Exception ex)
         {
@@ -223,6 +236,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
             }
 
             string candidateJson = payload.GetRawText();
+            CountRemoteCandidate(candidateJson);
             if (_hasRemoteDescription)
             {
                 await _connection.AddIceCandidateAsync(candidateJson);
@@ -279,6 +293,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
 
         try
         {
+            CountLocalCandidate(candidateJson);
             await _signalingClient.SendIceCandidateAsync(
                 remotePeerId, ParsePayload(candidateJson, "ice"));
         }
@@ -303,10 +318,17 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
         };
 
         SetState(mapped);
+
+        if (state is WebRtcConnectionState.Failed or WebRtcConnectionState.Disconnected)
+        {
+            CancelIceWatchdog();
+            OperationFailed?.Invoke($"connection {state} — {BuildIceSummary()}");
+        }
     }
 
     private void OnDataChannelOpened()
     {
+        CancelIceWatchdog();
         DataChannelOpened?.Invoke();
         SetState(P2PConnectionState.Connected);
     }
@@ -327,6 +349,7 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
 
     private async Task ResetLockedAsync()
     {
+        CancelIceWatchdog();
         IWebRtcPeerConnection? connection = Interlocked.Exchange(ref _connection, null);
         if (connection is not null)
         {
@@ -341,6 +364,104 @@ public sealed class WebRtcConnectionManager : IP2PConnectionManager
         _isInitiator = false;
         _hasRemoteDescription = false;
         _pendingRemoteCandidates.Clear();
+        ResetIceCounters();
+    }
+
+    private void ResetIceCounters()
+    {
+        Interlocked.Exchange(ref _localHostCandidates, 0);
+        Interlocked.Exchange(ref _localSrflxCandidates, 0);
+        Interlocked.Exchange(ref _localRelayCandidates, 0);
+        Interlocked.Exchange(ref _remoteHostCandidates, 0);
+        Interlocked.Exchange(ref _remoteSrflxCandidates, 0);
+        Interlocked.Exchange(ref _remoteRelayCandidates, 0);
+    }
+
+    private void CountLocalCandidate(string candidateJson)
+    {
+        switch (ExtractCandidateType(candidateJson))
+        {
+            case "host": Interlocked.Increment(ref _localHostCandidates); break;
+            case "srflx": Interlocked.Increment(ref _localSrflxCandidates); break;
+            case "relay": Interlocked.Increment(ref _localRelayCandidates); break;
+        }
+    }
+
+    private void CountRemoteCandidate(string candidateJson)
+    {
+        switch (ExtractCandidateType(candidateJson))
+        {
+            case "host": Interlocked.Increment(ref _remoteHostCandidates); break;
+            case "srflx": Interlocked.Increment(ref _remoteSrflxCandidates); break;
+            case "relay": Interlocked.Increment(ref _remoteRelayCandidates); break;
+        }
+    }
+
+    private static string ExtractCandidateType(string candidateJson)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(candidateJson);
+            string candidate = document.RootElement.ValueKind == JsonValueKind.Object &&
+                               document.RootElement.TryGetProperty("candidate", out JsonElement value) &&
+                               value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+
+            if (candidate.Contains("typ host", StringComparison.Ordinal)) return "host";
+            if (candidate.Contains("typ srflx", StringComparison.Ordinal)) return "srflx";
+            if (candidate.Contains("typ prflx", StringComparison.Ordinal)) return "prflx";
+            if (candidate.Contains("typ relay", StringComparison.Ordinal)) return "relay";
+            return "unknown";
+        }
+        catch (JsonException)
+        {
+            return "unknown";
+        }
+    }
+
+    private string BuildIceSummary() =>
+        $"local ICE: {Interlocked.CompareExchange(ref _localHostCandidates, 0, 0)} host/" +
+        $"{Interlocked.CompareExchange(ref _localSrflxCandidates, 0, 0)} srflx/" +
+        $"{Interlocked.CompareExchange(ref _localRelayCandidates, 0, 0)} relay, " +
+        $"remote ICE: {Interlocked.CompareExchange(ref _remoteHostCandidates, 0, 0)} host/" +
+        $"{Interlocked.CompareExchange(ref _remoteSrflxCandidates, 0, 0)} srflx/" +
+        $"{Interlocked.CompareExchange(ref _remoteRelayCandidates, 0, 0)} relay";
+
+    private void StartIceWatchdog()
+    {
+        CancelIceWatchdog();
+        var cts = new CancellationTokenSource();
+        _iceWatchdogCts = cts;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(IceWatchdogDelay, cts.Token);
+                if (_state is P2PConnectionState.Connecting or P2PConnectionState.Idle)
+                {
+                    int localSrflx = Interlocked.CompareExchange(ref _localSrflxCandidates, 0, 0);
+                    if (localSrflx == 0)
+                    {
+                        OperationFailed?.Invoke(
+                            "no public (srflx) ICE candidates gathered — STUN servers unreachable or blocked");
+                    }
+                    else
+                    {
+                        OperationFailed?.Invoke(
+                            $"srflx candidates gathered but connection stalled — {BuildIceSummary()}");
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, CancellationToken.None);
+    }
+
+    private void CancelIceWatchdog()
+    {
+        Interlocked.Exchange(ref _iceWatchdogCts, null)?.Cancel();
     }
 
     private void SetState(P2PConnectionState state)

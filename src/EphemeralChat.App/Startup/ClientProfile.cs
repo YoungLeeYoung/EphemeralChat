@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using EphemeralChat.Core.Signaling;
 
 namespace EphemeralChat.App.Startup;
 
@@ -12,21 +13,25 @@ namespace EphemeralChat.App.Startup;
 public sealed partial class ClientProfile
 {
     private const string ProfileSwitch = "--profile";
+    private const string ServerSwitch = "--server";
 
     [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$")]
     private static partial Regex ProfileNamePattern();
 
-    public ClientProfile(string? name, string localAppDataDirectory)
+    public ClientProfile(string? name, string localAppDataDirectory, Uri? serverUri = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localAppDataDirectory);
 
         Name = name;
+        ServerUri = serverUri;
         IdentityDirectory = name is null
             ? Path.Combine(localAppDataDirectory, "EphemeralChat")
             : Path.Combine(localAppDataDirectory, "EphemeralChat", "Profiles", name);
     }
 
     public string? Name { get; }
+
+    public Uri? ServerUri { get; }
 
     public string IdentityDirectory { get; }
 
@@ -38,7 +43,8 @@ public sealed partial class ClientProfile
     public static ClientProfile Resolve(string[] args, string localAppDataDirectory)
     {
         string? profileName = ParseProfileName(args);
-        return new ClientProfile(profileName, localAppDataDirectory);
+        Uri? serverUri = ParseServerUri(args);
+        return new ClientProfile(profileName, localAppDataDirectory, serverUri);
     }
 
     private static string? ParseProfileName(string[] args)
@@ -79,5 +85,65 @@ public sealed partial class ClientProfile
         }
 
         return null;
+    }
+
+    private static Uri? ParseServerUri(string[] args)
+    {
+        for (int index = 0; index < args.Length; index++)
+        {
+            string argument = args[index];
+            bool isSeparatedSwitch = argument.Equals(ServerSwitch, StringComparison.OrdinalIgnoreCase);
+            bool isInlineSwitch = argument.StartsWith(ServerSwitch + "=", StringComparison.OrdinalIgnoreCase);
+
+            if (!isSeparatedSwitch && !isInlineSwitch)
+            {
+                continue;
+            }
+
+            string? value;
+            if (isInlineSwitch)
+            {
+                value = argument[(ServerSwitch.Length + 1)..];
+            }
+            else
+            {
+                if (index + 1 >= args.Length)
+                {
+                    throw new ArgumentException("The --server switch requires a signaling URI.");
+                }
+
+                value = args[index + 1];
+            }
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException("The --server switch requires a signaling URI.");
+            }
+
+            return NormalizeServerUri(value.Trim());
+        }
+
+        return null;
+    }
+
+    private static Uri NormalizeServerUri(string value)
+    {
+        string candidate = value.Contains("://", StringComparison.Ordinal)
+            ? value
+            : "ws://" + value;
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri) ||
+            (uri.Scheme != "ws" && uri.Scheme != "wss"))
+        {
+            throw new ArgumentException("The --server value must be a ws:// or wss:// URI.");
+        }
+
+        if (string.IsNullOrEmpty(uri.AbsolutePath) || uri.AbsolutePath == "/")
+        {
+            var builder = new UriBuilder(uri) { Path = SignalingProtocol.WebSocketPath };
+            uri = builder.Uri;
+        }
+
+        return uri;
     }
 }

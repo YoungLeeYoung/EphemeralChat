@@ -18,6 +18,17 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
         Converters = { new JsonStringEnumConverter() }
     };
 
+    // Public STUN servers let peers behind NAT discover their reflexive
+    // (public) addresses. STUN never relays data; without it only host
+    // (LAN) candidates are gathered and cross-network sessions fail.
+    private static readonly RTCIceServer[] IceServers =
+    [
+        new() { urls = "stun:stun.l.google.com:19302" },
+        new() { urls = "stun:stun.cloudflare.com:3478" },
+        new() { urls = "stun:stun.miwifi.com:3478" },
+        new() { urls = "stun:stun.qq.com:3478" }
+    ];
+
     public event Action<string>? IceCandidateGenerated;
     public event Action<WebRtcConnectionState>? ConnectionStateChanged;
     public event Action? DataChannelOpened;
@@ -37,7 +48,10 @@ public sealed class SipsorceryPeerConnection : IWebRtcPeerConnection
 
     public SipsorceryPeerConnection()
     {
-        _connection = new RTCPeerConnection();
+        _connection = new RTCPeerConnection(new RTCConfiguration
+        {
+            iceServers = IceServers.ToList()
+        });
         _connection.onicecandidate += candidate =>
             IceCandidateGenerated?.Invoke(candidate.toJSON());
         _connection.onconnectionstatechange += state =>

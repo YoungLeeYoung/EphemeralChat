@@ -58,4 +58,59 @@ public class ClientProfileTests
         Assert.Throws<ArgumentException>(
             () => ClientProfile.Resolve(args, Path.GetTempPath()));
     }
+
+    [Fact]
+    public void Resolve_WithoutServer_ServerUriIsNull()
+    {
+        ClientProfile profile = ClientProfile.Resolve([], Path.GetTempPath());
+
+        Assert.Null(profile.ServerUri);
+    }
+
+    [Fact]
+    public void Resolve_ServerSwitch_NormalizesHostAndPortToWebSocketPath()
+    {
+        ClientProfile profile = ClientProfile.Resolve(
+            ["--server", "203.0.113.10:8080"], Path.GetTempPath());
+
+        Assert.Equal("ws://203.0.113.10:8080/ws", profile.ServerUri!.ToString());
+    }
+
+    [Fact]
+    public void Resolve_ServerSwitch_InlineFullUriIsPreserved()
+    {
+        ClientProfile profile = ClientProfile.Resolve(
+            ["--server=ws://203.0.113.10:8080"], Path.GetTempPath());
+
+        Assert.Equal("ws://203.0.113.10:8080/ws", profile.ServerUri!.ToString());
+    }
+
+    [Fact]
+    public void Resolve_ServerSwitch_HostWithoutPortDefaultsToWsScheme()
+    {
+        ClientProfile profile = ClientProfile.Resolve(
+            ["--server", "203.0.113.10"], Path.GetTempPath());
+
+        Assert.Equal("ws://203.0.113.10/ws", profile.ServerUri!.ToString());
+    }
+
+    [Fact]
+    public void Resolve_ServerSwitch_WssSchemeAndCustomPathArePreserved()
+    {
+        ClientProfile profile = ClientProfile.Resolve(
+            ["--server", "wss://chat.example.com/gw"], Path.GetTempPath());
+
+        Assert.Equal("wss://chat.example.com/gw", profile.ServerUri!.ToString());
+    }
+
+    [Theory]
+    [InlineData("--server")]
+    [InlineData("--server=")]
+    [InlineData("--server", "ftp://203.0.113.10")]
+    [InlineData("--server", "not a uri at all")]
+    public void Resolve_RejectsInvalidServerSwitches(params string[] args)
+    {
+        Assert.Throws<ArgumentException>(
+            () => ClientProfile.Resolve(args, Path.GetTempPath()));
+    }
 }

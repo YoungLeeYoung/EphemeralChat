@@ -22,7 +22,7 @@ public partial class App : Application
 
         var startup = new IdentityStartupService(service).LoadOrRecover(PromptIdentityRecovery);
 
-        var viewModel = new MainViewModel();
+        var viewModel = new MainViewModel(profile.ServerUri);
         if (startup.Identity is { } identity)
         {
             _identity = identity;
