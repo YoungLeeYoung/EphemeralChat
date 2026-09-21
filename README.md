@@ -24,9 +24,10 @@
 | Strict P2P mode | 🔜 Planned |
 
 **problems faced**
-There are still some problems with connecting the server which has a domain name since it is ok to di it with the ipv4 address directly.
-WebRTC section is not fully tested to find the problems caused failed p2p connection in wifi which is not that pure.
-P2P is still under development because this is the key idea of this program.
+
+- There are still some problems with connecting the server which has a domain name since it is ok to di it with the ipv4 address directly.
+- WebRTC section is not fully tested to find the problems caused failed p2p connection in wifi which is not that pure.
+- P2P is still under development because this is the key idea of this program.
 
 ### Architecture
 
